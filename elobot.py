@@ -16,9 +16,9 @@ BACKDOOR_ENABLED = True
 BACKDOOR_PREFIX = "__"
 BACKDOOR_REGEX = "(?:{})?".format(BACKDOOR_PREFIX) if BACKDOOR_ENABLED else ''
 
-#WINNER_REGEX      = re.compile('^I\s+(crushed|rekt|beat|whooped)\s+<@([A-z0-9]*)>\s+(\d{1,2})-(\d{1,2})\s*(,\s*(\d{1,2})-(\d{1,2}))*', re.IGNORECASE)
-beat_terms = 'crushed|rekt|beat|whooped|destroyed|smashed|demolished|decapitated|smothered|creamed'
-WINNER_REGEX      = re.compile(BACKDOOR_REGEX + 'I ({}) <@([A-z0-9]*)> (\d+) ?- ?(\d+)'.format(beat_terms), re.IGNORECASE)
+BEAT_TERMS        = 'crushed|rekt|beat|whooped|destroyed|smashed|demolished|decapitated|smothered|creamed'
+
+WINNER_REGEX      = re.compile(BACKDOOR_REGEX + 'I (?:{}) <@([A-z0-9]*)> (\d+) ?- ?(\d+)'.format(BEAT_TERMS), re.IGNORECASE)
 CONFIRM_REGEX     = re.compile(BACKDOOR_REGEX + 'Confirm (\d+)', re.IGNORECASE)
 CONFIRM_ALL_REGEX = re.compile(BACKDOOR_REGEX + 'Confirm all', re.IGNORECASE)
 DELETE_REGEX      = re.compile(BACKDOOR_REGEX + 'Delete (\d+)', re.IGNORECASE)
@@ -128,70 +128,47 @@ class EloBot(object):
 
             messages = self.slack_client.rtm_read()
             for message in messages:
-                if message.get('type', False) == 'message' and message.get('channel', False) == self.channel_id and message.get('text', False):
+                if 'user' in message and message.get('type', False) == 'message' and message.get('channel', False) == self.channel_id and message.get('text', False):
                     print('Message received:\n{}'.format(message))
 
-                    has_backdoor = BACKDOOR_ENABLED and message['text'].startswith(BACKDOOR_PREFIX)
-                    if WINNER_REGEX.match(message['text']):
-                        self.winner(message)
-                    elif CONFIRM_REGEX.match(message['text']):
-                        self.confirm(message['user'], message['text'], has_backdoor)
-                    elif CONFIRM_ALL_REGEX.match(message['text']):
-                        self.confirm_all(message)
-                    elif DELETE_REGEX.match(message['text']):
-                        self.delete(message['user'], message['text'], has_backdoor)
-                    elif LEADERBOARD_REGEX.match(message['text']):
+                    text = message['text']
+                    user_handle = message['user']
+                    has_backdoor = BACKDOOR_ENABLED and text.startswith(BACKDOOR_PREFIX)
+                    if WINNER_REGEX.match(text):
+                        loser_handle, winner_score, loser_score = re.search(WINNER_REGEX, text).groups()
+                        self.winner(user_handle, loser_handle, int(winner_score), int(loser_score))
+                    elif CONFIRM_REGEX.match(text):
+                        match_id, = re.search(CONFIRM_REGEX, text).groups()
+                        self.confirm(user_handle, match_id, has_backdoor)
+                    elif CONFIRM_ALL_REGEX.match(text):
+                        self.confirm_all(user_handle)
+                    elif DELETE_REGEX.match(text):
+                        match_id, = re.search(DELETE_REGEX, text).groups()
+                        self.delete(user_handle, match_id, has_backdoor)
+                    elif LEADERBOARD_REGEX.match(text):
                         self.print_leaderboard()
-                    elif UNCONFIRMED_REGEX.match(message['text']):
+                    elif UNCONFIRMED_REGEX.match(text):
                         self.print_unconfirmed()
 
-    def winner(self, message):
-        # 0: space, 1: winning verb, 2: loser_id, 3: first score, 4: second score
-        # then 0 or more of...
-        # 5: 2nd game hyphenated score, 6: 2nd game first score, 7: 2nd game second score
-        msg = message['text']
-        values = re.split(WINNER_REGEX, msg)
-        if not values or len(values) < 5:
+    def winner(self, winner_handle, loser_handle, winner_score, loser_score):
+        match = Match.create(winner_handle=winner_handle, winner_score=winner_score, loser_handle=loser_handle, loser_score=loser_score)
+        self.talk(f'<@{loser_handle}>, type "Confirm {match.id}" to confirm the above match, or ignore it if it\'s incorrect')
+
+    def confirm_all(self, user_handle):
+        matches = list(Match.select(Match).where(Match.loser_handle == user_handle, Match.pending == True))
+        for match in matches:
+            self.confirm(user_handle, match.id)
+        self.talk("Confirmed {} matches!".format(len(matches)))
+
+    def confirm(self, user_handle, match_id, has_backdoor=False):
+        try:
+            match = Match.select().where(Match.id == match_id, Match.pending == True).get()
+        except Exception:  # TODO: Figure out how to import MatchDoesNotExist
+            self.talk('No pending match #{}'.format(match_id))
             return
 
-        loser_id = values[2]
-
-        # csv game list starts after the end of the slack username
-        games_csv = msg[(msg.index('>') + 1):]
-        games = games_csv.replace(' ', '').split(',')
-
-        for game in games:
-            scores = game.split('-')
-            if len(scores) != 2:
-                continue
-
-            first_score = int(scores[0])
-            second_score = int(scores[1])
-
-            try:
-                match = Match.create(winner_handle=message['user'], winner_score=first_score, loser_handle=loser_id, loser_score=second_score)
-                self.talk('<@' + loser_id + '>: Please type "Confirm ' + str(match.id) + '" to confirm the above match or ignore it if it is incorrect')
-            except Exception as e:
-                self.talk('Unable to save match. ' + str(e))
-
-    def confirm_all(self, message):
-        match_list = []
-        for match in Match.select(Match).where(Match.loser_handle == message['user'], Match.pending == True):
-            match_list.append(match)
-        for match in match_list:
-            self.confirm(message['user'], 'Confirm '+ str(match.id))
-
-    def confirm(self, user, message_text, has_backdoor=False):
-        values = re.split(CONFIRM_REGEX, message_text)
-
-        #0: blank, 1: match_id, 2: blank
-        if not values or len(values) != 3:
-            return
-        match_id = values[1]
-
-        match = Match.select().where(Match.id == match_id, Match.pending == True).get()
-        if not has_backdoor and match.loser_handle != user:
-            self.talk('<@{}>, you are not allowed to confirm match #{}!'.format(user, match_id))
+        if not has_backdoor and match.loser_handle != user_handle:
+            self.talk('<@{}>, you are not allowed to confirm match #{}!'.format(user_handle, match_id))
             return
 
         with db.transaction():
@@ -202,22 +179,20 @@ class EloBot(object):
             match.pending = False
             match.save()
 
-            self.talk('<@{}> your new ELO is: {} (+{})'.format(match.winner_handle, winner.rating, winner_elo_delta))
-            self.talk('<@{}> your new ELO is: {} (-{})'.format(match.loser_handle, loser.rating, loser_elo_delta))
+            self.talk('<@{}>, your new ELO is: {} (+{})'.format(match.winner_handle, winner.rating, winner_elo_delta))
+            self.talk('<@{}>, your new ELO is: {} (-{})'.format(match.loser_handle, loser.rating, loser_elo_delta))
 
-    def delete(self, user, message_text, has_backdoor=False):
-        values = re.split(DELETE_REGEX, message_text)
+    def delete(self, user_handle, match_id, has_backdoor=False):
+        try:
+            match = Match.select(Match).where(Match.id == match_id, Match.pending == True).get()
+        except Exception:  # TODO: Figure out how to import MatchDoesNotExist
+            self.talk('No match #{}'.format(match_id))
 
-        #0: blank, 1: match_id, 2: blank
-        if not values or len(values) != 3:
-            return
-
-        match = Match.select(Match).where(Match.id == values[1], Match.pending == True).get()
-        if not has_backdoor and match.winner_handle != user:
-            self.talk('<@{}>, you are not allowed to delete match #{}!'.format(user, values[1]))
+        if not has_backdoor and match.winner_handle != user_handle:
+            self.talk('<@{}>, you are not allowed to delete match #{}!'.format(user_handle, match_id))
 
         match.delete_instance()
-        self.talk('Deleted match ' + values[1])
+        self.talk('Deleted match #{}'.format(match_id))
 
     def print_leaderboard(self):
         table = []
