@@ -1,9 +1,5 @@
 from peewee import *
 from playhouse.sqlite_ext import SqliteExtDatabase
-#import logging
-#logger = logging.getLogger('peewee')
-#logger.setLevel(logging.DEBUG)
-#logger.addHandler(logging.StreamHandler())
 
 db = SqliteExtDatabase('elo.db', pragmas=(('foreign_keys', True),))
 
@@ -24,7 +20,6 @@ class Player():
             return 16
         elif self.rating < 2100:
             return 32
-
         return 24
 
     def __str__(self):
@@ -42,3 +37,4 @@ class Match(BaseModel):
         if self.winner_handle != self.loser_handle:
             return super(Match, self).save(*args, **kwargs)
         raise IntegrityError('Winner cannot be the same as loser')
+
