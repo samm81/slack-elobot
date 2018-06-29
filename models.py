@@ -15,6 +15,7 @@ class Player():
         self.losses = 0
         self.rating = 1500
 
+    @property
     def k_factor(self):
         if self.rating > 2400:
             return 16
