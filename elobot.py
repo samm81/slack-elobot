@@ -11,12 +11,19 @@ from collections import defaultdict
 
 from models import db, Player, Match
 
-WINNER_REGEX      = re.compile('^I\s+(crushed|rekt|beat|whooped)\s+<@([A-z0-9]*)>\s+(\d{1,2})-(\d{1,2})\s*(,\s*(\d{1,2})-(\d{1,2}))*', re.IGNORECASE)
-CONFIRM_REGEX     = re.compile('Confirm (\d+)', re.IGNORECASE)
-CONFIRM_ALL_REGEX = re.compile('Confirm all', re.IGNORECASE)
-DELETE_REGEX      = re.compile('Delete (\d+)', re.IGNORECASE)
-LEADERBOARD_REGEX = re.compile('Print leaderboard', re.IGNORECASE)
-UNCONFIRMED_REGEX = re.compile('Print unconfirmed', re.IGNORECASE)
+# We allow for an optional backdoor that allows any user to run any command
+BACKDOOR_ENABLED = True
+BACKDOOR_PREFIX = "__"
+BACKDOOR_REGEX = "(?:{})?".format(BACKDOOR_PREFIX) if BACKDOOR_ENABLED else ''
+
+#WINNER_REGEX      = re.compile('^I\s+(crushed|rekt|beat|whooped)\s+<@([A-z0-9]*)>\s+(\d{1,2})-(\d{1,2})\s*(,\s*(\d{1,2})-(\d{1,2}))*', re.IGNORECASE)
+beat_terms = 'crushed|rekt|beat|whooped|destroyed|smashed|demolished|decapitated|smothered|creamed'
+WINNER_REGEX      = re.compile(BACKDOOR_REGEX + 'I ({}) <@([A-z0-9]*)> (\d+) ?- ?(\d+)'.format(beat_terms), re.IGNORECASE)
+CONFIRM_REGEX     = re.compile(BACKDOOR_REGEX + 'Confirm (\d+)', re.IGNORECASE)
+CONFIRM_ALL_REGEX = re.compile(BACKDOOR_REGEX + 'Confirm all', re.IGNORECASE)
+DELETE_REGEX      = re.compile(BACKDOOR_REGEX + 'Delete (\d+)', re.IGNORECASE)
+LEADERBOARD_REGEX = re.compile(BACKDOOR_REGEX + 'Print leaderboard', re.IGNORECASE)
+UNCONFIRMED_REGEX = re.compile(BACKDOOR_REGEX + 'Print unconfirmed', re.IGNORECASE)
 
 from_zone = tz.gettz('UTC')
 to_zone = tz.gettz('America/Los_Angeles')
@@ -122,15 +129,17 @@ class EloBot(object):
             messages = self.slack_client.rtm_read()
             for message in messages:
                 if message.get('type', False) == 'message' and message.get('channel', False) == self.channel_id and message.get('text', False):
-                    print('Processing message in my channel:\n{}'.format(message))
+                    print('Message received:\n{}'.format(message))
+
+                    has_backdoor = BACKDOOR_ENABLED and message['text'].startswith(BACKDOOR_PREFIX)
                     if WINNER_REGEX.match(message['text']):
                         self.winner(message)
                     elif CONFIRM_REGEX.match(message['text']):
-                        self.confirm(message['user'], message['text'])
+                        self.confirm(message['user'], message['text'], has_backdoor)
                     elif CONFIRM_ALL_REGEX.match(message['text']):
                         self.confirm_all(message)
                     elif DELETE_REGEX.match(message['text']):
-                        self.delete(message['user'], message['text'])
+                        self.delete(message['user'], message['text'], has_backdoor)
                     elif LEADERBOARD_REGEX.match(message['text']):
                         self.print_leaderboard()
                     elif UNCONFIRMED_REGEX.match(message['text']):
@@ -172,7 +181,7 @@ class EloBot(object):
         for match in match_list:
             self.confirm(message['user'], 'Confirm '+ str(match.id))
 
-    def confirm(self, user, message_text):
+    def confirm(self, user, message_text, has_backdoor=False):
         values = re.split(CONFIRM_REGEX, message_text)
 
         #0: blank, 1: match_id, 2: blank
@@ -181,7 +190,7 @@ class EloBot(object):
         match_id = values[1]
 
         match = Match.select().where(Match.id == match_id, Match.pending == True).get()
-        if match.loser_handle != user:
+        if not has_backdoor and match.loser_handle != user:
             self.talk('<@{}>, you are not allowed to confirm match #{}!'.format(user, match_id))
             return
 
@@ -196,19 +205,19 @@ class EloBot(object):
             self.talk('<@{}> your new ELO is: {} (+{})'.format(match.winner_handle, winner.rating, winner_elo_delta))
             self.talk('<@{}> your new ELO is: {} (-{})'.format(match.loser_handle, loser.rating, loser_elo_delta))
 
-    def delete(self, user, message_text):
+    def delete(self, user, message_text, has_backdoor=False):
         values = re.split(DELETE_REGEX, message_text)
 
         #0: blank, 1: match_id, 2: blank
         if not values or len(values) != 3:
             return
 
-        try:
-            match = Match.select(Match).where(Match.id == values[1], Match.winner_handle == user, Match.pending == True).get()
-            match.delete_instance()
-            self.talk('Deleted match ' + values[1])
-        except:
-            self.talk('You are not the winner of match ' + values[1])
+        match = Match.select(Match).where(Match.id == values[1], Match.pending == True).get()
+        if not has_backdoor and match.winner_handle != user:
+            self.talk('<@{}>, you are not allowed to delete match #{}!'.format(user, values[1]))
+
+        match.delete_instance()
+        self.talk('Deleted match ' + values[1])
 
     def print_leaderboard(self):
         table = []
