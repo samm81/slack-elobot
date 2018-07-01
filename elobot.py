@@ -169,7 +169,7 @@ class EloBot(object):
 
         if BACKDOOR_ENABLED and BACKDOOR_REGEX.match(text):
             new_user_handle, new_text = re.search(BACKDOOR_REGEX, text).groups()
-            self.handle_message({
+            return self.handle_message({
                 'user': new_user_handle,
                 'text': new_text
             })
@@ -296,4 +296,3 @@ if __name__ == '__main__':
         config['bot_name'],
         config['min_streak_length'],
     )
-

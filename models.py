@@ -38,4 +38,3 @@ class Match(BaseModel):
         if self.winner_handle != self.loser_handle:
             return super(Match, self).save(*args, **kwargs)
         raise IntegrityError('Winner cannot be the same as loser')
-
