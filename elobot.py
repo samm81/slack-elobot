@@ -16,7 +16,7 @@ HANDLE_RE = '<@([A-z0-9]*)>'
 # We allow for an optional backdoor that allows any user to run any command
 # Good for debugging
 BACKDOOR_ENABLED = True
-BACKDOOR_REGEX = re.compile(f'As {HANDLE_RE}: (.*)', re.IGNORECASE)
+BACKDOOR_REGEX = re.compile(f'As {HANDLE_RE}:? (.*)', re.IGNORECASE)
 
 BEAT_TERMS = (''
 '''crushed
@@ -83,8 +83,8 @@ class EloBot(object):
         winner_new_elo = round(winner.rating + winner.k_factor * (1 - winner_expected_score))
         loser_new_elo  = round(loser.rating  + loser.k_factor  * (0 - loser_expected_score))
 
-        winner_elo_delta = abs(winner_new_elo - winner.rating)
-        loser_elo_delta  = abs(loser_new_elo  - loser.rating)
+        winner_elo_delta = winner_new_elo - winner.rating
+        loser_elo_delta  = loser_new_elo  - loser.rating
 
         winner.wins += 1
         loser.losses += 1
@@ -93,6 +93,24 @@ class EloBot(object):
         loser.rating = loser_new_elo
 
         return winner_elo_delta, loser_elo_delta
+
+    def apply_match(self, match):
+        """
+        Apply a match to the ranking system, changing winner and loser's elos.
+        Return (winner elo delta, loser elo delta)
+        """
+        if not match.pending:
+            raise ValuError("Match must be pending to apply.")
+
+        with db.transaction():
+            winner = self.players[match.winner_handle]
+            loser  = self.players[match.loser_handle]
+            winner_elo_delta, loser_elo_delta = self.rank_game(winner, loser)
+
+            match.pending = False
+            match.save()
+
+        return (winner_elo_delta, loser_elo_delta)
 
     def init_players(self):
         """Initializes self.players with the games stored in the database"""
@@ -189,34 +207,28 @@ class EloBot(object):
             return None
         return match
 
-    def get_match(self, match_id):
-        """Get a match or say an error and return None"""
-        match = Match.select(Match).where(Match.id == match_id).get()
-        if not match:
-            self.talk(f'No match #{match_id}!')
-        return match
-
-    def get_pending(self, match_id):
-        """Get a pending match or say an error and return None"""
-        match = self.get_match(match_id)
-        if not match:
-            return None
-        if not match.pending:
-            self.talk(f'Match #{match_id} is not pending!')
-            return None
-        return match
-
     def winner(self, winner_handle, loser_handle, winner_score, loser_score):
         match = Match.create(winner_handle=winner_handle, winner_score=winner_score, loser_handle=loser_handle, loser_score=loser_score)
-        self.talk_to(loser_handle, f'Type "Confirm {match.id}" to confirm the above match, or ignore it if it\'s incorrect')
+        self.talk_to(loser_handle, f'Type "Confirm {match.id}" to confirm the above match, or ignore it if it\'s incorrect.')
 
     def confirm_all(self, user_handle):
         matches = (Match.select(Match)
                         .where(Match.loser_handle == user_handle, Match.pending == True)
                         .order_by(Match.played.asc()))
+
+        total_elo_deltas = defaultdict(lambda: 0)
         for match in matches:
-            self.confirm(user_handle, match.id)
+            winner_elo_delta, loser_elo_delta = self.apply_match(match)
+            total_elo_deltas[match.winner_handle] += winner_elo_delta
+            total_elo_deltas[match.loser_handle]  += loser_elo_delta
+
         self.talk(f'Confirmed {len(matches)} matches!')
+        for user_handle, elo_delta in total_elo_deltas.items():
+            self.talk_to(user_handle, 'Your new ELO is {} ({}{}).'.format(
+                self.players[user_handle].rating,
+                '+' if elo_delta >= 0 else '',
+                elo_delta,
+            ))
 
     def confirm(self, user_handle, match_id):
         match = self.get_pending(match_id)
@@ -226,16 +238,9 @@ class EloBot(object):
             self.talk_to(user_handle, f'You are not allowed to confirm match #{match_id}!')
             return
 
-        with db.transaction():
-            winner = self.players[match.winner_handle]
-            loser  = self.players[match.loser_handle]
-            winner_elo_delta, loser_elo_delta = self.rank_game(winner, loser)
-
-            match.pending = False
-            match.save()
-
-            self.talk_to(match.winner_handle, f'Your new ELO is {winner.rating} (+{winner_elo_delta}).')
-            self.talk_to(match.loser_handle , f'Your new ELO is {loser.rating } (-{loser_elo_delta }).')
+        winner_elo_delta, loser_elo_delta = self.apply_match(match)
+        self.talk_to(match.winner_handle, f'Your new ELO is {self.players[match.winner_handle].rating} (+{winner_elo_delta}).')
+        self.talk_to(match.loser_handle , f'Your new ELO is {self.players[match.loser_handle ].rating} ({loser_elo_delta }).')
 
     def delete(self, user_handle, match_id):
         match = self.get_pending(match_id)
