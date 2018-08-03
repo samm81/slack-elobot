@@ -55,7 +55,7 @@ class EloBot(object):
     def init_players(self):
         print('initializing in-memory player objects')
         print('loading match history')
-        matches = list(Match.select().order_by(Match.id))
+        matches = list(Match.select().order_by(Match.played.asc()))
         print('simulating games...')
         for match in matches:
             if not match.pending:
@@ -129,18 +129,15 @@ class EloBot(object):
             return
 
         loser_id = values[2]
-
-        # csv game list starts after the end of the slack username
-        games_csv = msg[(msg.index('>') + 1):]
-        games = games_csv.replace(' ', '').split(',')
+        games = zip(values[3::2], values[4::2])
 
         for game in games:
-            scores = game.split('-')
-            if len(scores) != 2:
-                continue
-
-            first_score = int(scores[0])
-            second_score = int(scores[1])
+            try:
+                first_score, second_score = map(int, game)
+            except ValueError:
+                self.talk('Invalid scores {} or {}'.format(first_score, second_score))
+            except TypeError:
+                break
 
             try:
                 match = Match.create(winner_handle=message['user'], winner_score=first_score, loser_handle=loser_id, loser_score=second_score)
