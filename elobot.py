@@ -127,7 +127,7 @@ class EloBot(object):
         while not self.slack_client.server.connected:
             print('Was disconnected, attemping to reconnect...')
             try:
-                self.slack_client.rtm_connect()
+                self.slack_client.rtm_connect(auto_reconnect=True, with_team_state=False)
             except:  # TODO: Except what
                 pass
             time.sleep(sleeptime)
