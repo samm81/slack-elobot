@@ -100,7 +100,7 @@ class EloBot(object):
         Return (winner elo delta, loser elo delta)
         """
         if not match.pending:
-            raise ValuError("Match must be pending to apply.")
+            raise ValueError("Match must be pending to apply.")
 
         with db.transaction():
             winner = self.players[match.winner_handle]
