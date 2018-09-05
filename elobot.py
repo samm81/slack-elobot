@@ -15,7 +15,7 @@ HANDLE_RE = '<@([A-z0-9]*)>'
 
 # We allow for an optional backdoor that allows any user to run any command
 # Good for debugging
-BACKDOOR_ENABLED = True
+BACKDOOR_ENABLED = False
 BACKDOOR_REGEX = re.compile(f'As {HANDLE_RE}:? (.*)', re.IGNORECASE)
 
 BEAT_TERMS = (''
