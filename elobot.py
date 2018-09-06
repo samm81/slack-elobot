@@ -48,11 +48,17 @@ class SlackClient(SlackClient):
         return self.api_call('users.info', user=user_id)['user']['profile']['display_name_normalized']
 
     def get_channel_id(self, channel_name):
-        channels = self.api_call('channels.list')
+        next_cursor = None
 
-        for channel in channels['channels']:
-            if channel['name'] == channel_name:
-                return channel['id']
+        while True:
+            channels = self.api_call('channels.list', limit=1000, cursor=next_cursor)
+            for channel in channels['channels']:
+                if channel['name'] == channel_name:
+                    return channel['id']
+
+            next_cursor = channels['response_metadata']['next_cursor']
+            if not next_cursor:
+                break
 
         print('Unable to find channel: ' + channel_name)
         quit()
@@ -209,7 +215,7 @@ class EloBot(object):
 
     def winner(self, winner_handle, loser_handle, winner_score, loser_score):
         if winner_handle == loser_handle:
-            self.talk_to(f'Winner and loser must be different people!')
+            self.talk(f'Winner and loser must be different people!')
         else:
             try:
                 match = Match.create(winner_handle=winner_handle, winner_score=winner_score, loser_handle=loser_handle, loser_score=loser_score)
