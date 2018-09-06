@@ -215,7 +215,7 @@ class EloBot(object):
 
     def winner(self, winner_handle, loser_handle, winner_score, loser_score):
         if winner_handle == loser_handle:
-            self.talk_to(f'Winner and loser must be different people!')
+            self.talk(f'Winner and loser must be different people!')
         else:
             try:
                 match = Match.create(winner_handle=winner_handle, winner_score=winner_score, loser_handle=loser_handle, loser_score=loser_score)
