@@ -190,10 +190,12 @@ class EloBot(object):
 
     def get_match(self, match_id):
         """Get a match or say an error and return None"""
-        match = Match.select(Match).where(Match.id == match_id).get()
-        if not match:
+        try:
+            match = Match.select(Match).where(Match.id == match_id).get()
+        except DoesNotExist:
             self.talk(f'No match #{match_id}!')
-        return match
+        else:
+            return match
 
     def get_pending(self, match_id):
         """Get a pending match or say an error and return None"""
@@ -206,8 +208,15 @@ class EloBot(object):
         return match
 
     def winner(self, winner_handle, loser_handle, winner_score, loser_score):
-        match = Match.create(winner_handle=winner_handle, winner_score=winner_score, loser_handle=loser_handle, loser_score=loser_score)
-        self.talk_to(loser_handle, f'Type "Confirm {match.id}" to confirm the above match, or ignore it if it\'s incorrect.')
+        if winner_handle == loser_handle:
+            self.talk_to(f'Winner and loser must be different people!')
+        else:
+            try:
+                match = Match.create(winner_handle=winner_handle, winner_score=winner_score, loser_handle=loser_handle, loser_score=loser_score)
+            except OverflowError:
+                self.talk('Score(s) too large!')
+            else:
+                self.talk_to(loser_handle, f'Type "Confirm {match.id}" to confirm the above match, or ignore it if it\'s incorrect.')
 
     def confirm_all(self, user_handle):
         matches = (Match.select(Match)
